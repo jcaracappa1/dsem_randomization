@@ -1,0 +1,6 @@
+,bot.temp,diatom,juv.bio,adult.bio,catch
+bot.temp,0,1,1,1,0
+diatom,0,0,1,1,0
+juv.bio,0,0,0,1,0
+adult.bio,0,0,1,0,1
+catch,0,0,0,0,0

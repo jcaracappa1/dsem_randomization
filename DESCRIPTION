@@ -1,0 +1,5 @@
+Package: DSEMrand
+Type: Package
+Title: Randomization tests for DSEM
+Version: 0.1.0
+RoxygenNote: 7.3.2
