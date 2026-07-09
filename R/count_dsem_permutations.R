@@ -12,6 +12,7 @@
 #'        "estimate" forces Monte Carlo simulation.
 #' @param max_iter Numeric. The maximum number of permutations to evaluate. If the 
 #'        total possible combinations exceed this, the function defaults to estimation.
+#' @param latent_dict List. Optional named list mapping latent variables to their indicators.
 #'
 #' @return A list containing the total unconstrained combinations, the estimated 
 #'         (or exact) number of valid permutations, the constraint pass rate, 
@@ -19,18 +20,18 @@
 #' @importFrom igraph graph_from_adjacency_matrix distances
 #' @importFrom utils combn
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' # Calculate how many valid topologies exist for your reference graph
-#' perm_results <- count_dsem_permutations(true_adj, method = "auto")
-#' 
-#' print(perm_results)
-#' }
-
-count_dsem_permutations <- function(ref_adj, method = c("auto", "exact", "estimate"), max_iter = 100000) {
+count_dsem_permutations <- function(ref_adj, method = c("auto", "exact", "estimate"), max_iter = 100000, latent_dict = NULL) {
   
   method <- match.arg(method)
+  
+  # --- LATENT COMPLEX FILTER ---
+  # If a measurement model exists, it is fixed. We only calculate permutations 
+  # for the purely structural nodes to avoid combinatorial explosion.
+  if (!is.null(latent_dict)) {
+    indicators <- unname(unlist(latent_dict))
+    struct_nodes <- setdiff(colnames(ref_adj), indicators)
+    ref_adj <- ref_adj[struct_nodes, struct_nodes, drop = FALSE]
+  }
   
   # 1. Extract Node Classifications
   ref_bin <- matrix(as.numeric(ref_adj != 0), nrow = nrow(ref_adj), dimnames = dimnames(ref_adj))

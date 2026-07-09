@@ -4,13 +4,16 @@
 \alias{randomize_dsem_graph}
 \title{Generate Randomized Directed Graph Preserving Source/Sink Constraints}
 \usage{
-randomize_dsem_graph(ref_adj, lags_file)
+randomize_dsem_graph(ref_adj, ref_lags, latent_dict = NULL)
 }
 \arguments{
 \item{ref_adj}{Matrix. The reference directed adjacency matrix (weights or binary).
 Rows are sources, columns are targets.}
 
-\item{lags_file}{Character. Path to the CSV file containing the reference lag matrix.}
+\item{ref_lags}{Matrix or Character. The reference temporal lag matrix, or path to it.}
+
+\item{latent_dict}{List. Optional named list mapping latent variables to their 
+indicators. e.g., list("Phytoplankton" = c("diatom", "dino")).}
 }
 \value{
 A list containing:
@@ -20,5 +23,8 @@ A list containing:
         }
 }
 \description{
-Generate Randomized Directed Graph Preserving Source/Sink Constraints
+Takes a reference directed adjacency matrix and generates a new randomized 
+binary adjacency matrix. Supports "Latent Complexes" by safely collapsing 
+fixed measurement models during the randomization phase and reattaching 
+them post-randomization.
 }

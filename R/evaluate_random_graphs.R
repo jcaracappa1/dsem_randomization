@@ -11,6 +11,7 @@
 #' @param ref_lags Matrix. The reference temporal lag matrix.
 #' @param N Integer. The number of randomized graphs to generate and evaluate.
 #' @param deduplicate Logical. If \code{TRUE}, filters the results to return only unique graph structures.
+#' @param latent_dict List. Optional named list mapping latent variables to their indicators.
 #'
 #' @return A list containing:
 #'         \itemize{
@@ -35,7 +36,7 @@
 #' length(unique(batch_results$diagnostics$Exact_Match_ID))
 #' }
 
-evaluate_random_graphs <- function(ref_adj, ref_lags, N = 10, deduplicate = FALSE) {
+evaluate_random_graphs <- function(ref_adj, ref_lags, N = 10, deduplicate = FALSE, latent_dict = NULL) {
   
   # Ensure input is binary for topological checking
   ref_bin <- matrix(as.numeric(ref_adj != 0), nrow = nrow(ref_adj), dimnames = dimnames(ref_adj))
@@ -95,8 +96,8 @@ evaluate_random_graphs <- function(ref_adj, ref_lags, N = 10, deduplicate = FALS
   # 3. Batch Generation and Evaluation Loop
   for (i in 1:N) {
     
-    # Generate graph and matched lags
-    rand_res <- randomize_dsem_graph(ref_bin, ref_lags)
+    # Generate graph and matched lags, passing the latent dictionary to preserve the complex
+    rand_res <- randomize_dsem_graph(ref_bin, ref_lags, latent_dict = latent_dict)
     rand_adj <- rand_res$adj
     rand_lags <- rand_res$lags
     

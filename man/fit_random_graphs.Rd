@@ -4,7 +4,7 @@
 \alias{fit_random_graphs}
 \title{Batch Fit DSEM on Randomized Graphs}
 \usage{
-fit_random_graphs(batch_results, data.file, cores = 3)
+fit_random_graphs(batch_results, data.file, cores = 1, latent_dict = NULL)
 }
 \arguments{
 \item{batch_results}{List. The output object from \code{evaluate_random_graphs} 
@@ -13,6 +13,8 @@ containing \code{$graphs}, \code{$lags}, and \code{$diagnostics}.}
 \item{data.file}{Character. Path to the simulated time series data. Supports `.csv` or `.rds`.}
 
 \item{cores}{Integer. Number of CPU cores to use for parallel processing. Defaults to 1 (sequential).}
+
+\item{latent_dict}{List. Optional named list mapping latent variables to their indicators.}
 }
 \value{
 A named list of fitted DSEM objects, corresponding to each graph in the batch.

@@ -4,7 +4,13 @@
 \alias{evaluate_random_graphs}
 \title{Generate and Evaluate N Randomized DSEM Graphs}
 \usage{
-evaluate_random_graphs(ref_adj, ref_lags, N = 10, deduplicate = FALSE)
+evaluate_random_graphs(
+  ref_adj,
+  ref_lags,
+  N = 10,
+  deduplicate = FALSE,
+  latent_dict = NULL
+)
 }
 \arguments{
 \item{ref_adj}{Matrix. The reference directed adjacency matrix.}
@@ -14,6 +20,8 @@ evaluate_random_graphs(ref_adj, ref_lags, N = 10, deduplicate = FALSE)
 \item{N}{Integer. The number of randomized graphs to generate and evaluate.}
 
 \item{deduplicate}{Logical. If \code{TRUE}, filters the results to return only unique graph structures.}
+
+\item{latent_dict}{List. Optional named list mapping latent variables to their indicators.}
 }
 \value{
 A list containing:

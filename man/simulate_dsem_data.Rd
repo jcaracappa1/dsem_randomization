@@ -11,6 +11,7 @@ simulate_dsem_data(
   var.mu,
   var.sd,
   var.slope,
+  latent_vars = NULL,
   diagnostics = FALSE
 )
 }
@@ -27,24 +28,22 @@ simulate_dsem_data(
 
 \item{var.slope}{Numeric vector. A named vector of time-trend slopes.}
 
+\item{latent_vars}{Character vector. Optional. Names of nodes to treat as latent. 
+Their columns will be set to NA in the output data to force state-space estimation.}
+
 \item{diagnostics}{Logical. If TRUE, plots the DAG, creates a faceted plot of the data, 
 and prints a diagnostic table of expected weights vs. empirical correlations.}
 }
 \value{
 If `diagnostics = FALSE`, returns a data frame of the generated time series. 
-        If `diagnostics = TRUE`, returns a list containing `$data` (the time series) 
-        and `$diagnostic_summary` (a data frame of edge checks).
+        If `diagnostics = TRUE`, returns a list containing `$data` (the time series with 
+        latents masked), `$true_states` (the Oracle dataset with true latent values), 
+        and `$diagnostic_summary`.
 }
 \description{
 Reads two CSV files containing named matrices for causal weights and temporal lags. 
 Organizes the instantaneous effects into a DAG, and generates simulated time-series 
-data respecting both immediate and lagged relationships. Includes an optional 
-diagnostics suite to visualize the DAG, plot the series, and report empirical correlations.
-}
-\examples{
-\dontrun{
-sim_results <- simulate_dsem_data("weights.csv", "lags.csv", n_steps = 100,
-                                  var.mu = mu, var.sd = sd, var.slope = slopes,
-                                  diagnostics = TRUE)
-}
+data respecting both immediate and lagged relationships. Causal effects are 
+propagated as standardized anomalies internally to prevent variance cascading, 
+but the final output retains its raw, realistic ecological scales and trends.
 }

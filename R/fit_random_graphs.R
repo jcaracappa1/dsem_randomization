@@ -8,6 +8,7 @@
 #'        containing \code{$graphs}, \code{$lags}, and \code{$diagnostics}.
 #' @param data.file Character. Path to the simulated time series data. Supports `.csv` or `.rds`.
 #' @param cores Integer. Number of CPU cores to use for parallel processing. Defaults to 1 (sequential).
+#' @param latent_dict List. Optional named list mapping latent variables to their indicators.
 #'
 #' @return A named list of fitted DSEM objects, corresponding to each graph in the batch.
 #'         If a specific topology fails to converge, its list element will be NULL.
@@ -26,7 +27,7 @@
 #' print(batch_fits[[1]]$estimates)
 #' }
 
-fit_random_graphs <- function(batch_results, data.file, cores = 3) {
+fit_random_graphs <- function(batch_results, data.file, cores = 1, latent_dict = NULL) {
   
   graphs_list <- batch_results$graphs
   lags_list <- batch_results$lags
@@ -52,7 +53,8 @@ fit_random_graphs <- function(batch_results, data.file, cores = 3) {
     fit_res <- tryCatch({
       fit_generalized_dsem(adj.file = tmp_adj_file, 
                            lags.file = tmp_lags_file, 
-                           data.file = data.file)
+                           data.file = data.file,
+                           latent_dict = latent_dict)
     }, error = function(e) {
       warning(sprintf("Fitting failed for graph index %d (Iter %d): %s", 
                       i, diag_df$Iter[i], e$message), call. = FALSE)
@@ -74,7 +76,7 @@ fit_random_graphs <- function(batch_results, data.file, cores = 3) {
     # Export necessary variables and the fitting function to the worker nodes
     parallel::clusterExport(cl, 
                             varlist = c("graphs_list", "lags_list", "diag_df", 
-                                        "data.file", "fit_generalized_dsem"), 
+                                        "data.file", "fit_generalized_dsem", "latent_dict"), 
                             envir = environment())
     
     # Ensure workers have the required package loaded

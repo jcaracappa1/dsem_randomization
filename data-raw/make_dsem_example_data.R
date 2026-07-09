@@ -14,10 +14,11 @@ igraph::plot.igraph(p,
 
 dsem.data = DSEMrand::simulate_dsem_data(weights.file = here::here('data-raw','example_weight_dag.csv'),
                    lags.file = here::here('data-raw','example_lags_dag.csv'),
-                   n_steps = 100,
-                   var.mu = c('bot.temp' = 5,'diatom' = 1E6,'juv.bio' = 1E5,'adult.bio' = 1E4,'catch' = 1E3),
-                   var.sd = c('bot.temp' = 1,'diatom' = 1E3,'juv.bio' = 1E5,'adult.bio' = 1E3,'catch' = 1E2),
-                   var.slope = c('bot.temp' = 0.05,'diatom' = 0,'juv.bio' = -0.01,'adult.bio' = -0.05,'catch' = 0),
+                   latent_vars = 'food.quality',
+                   n_steps = 300,
+                   var.mu = c('bot.temp' = 5,'diatom' = 1E6,'juv.bio' = 1E5,'adult.bio' = 1E4,'catch' = 1E3, 'food.quality' = 100, 'growth' = 10, 'stratification' = 10, 'diatom.prop' = 0.7),
+                   var.sd = c('bot.temp' = 1,'diatom' = 1E3,'juv.bio' = 1E3,'adult.bio' = 1E3,'catch' = 1E2, 'food.quality' = 10, 'growth' = 3, 'stratification' = 3, 'diatom.prop' = 0.05),
+                   var.slope = c('bot.temp' = 0.025,'diatom' = 0,'juv.bio' = -0.01,'adult.bio' = -0.05,'catch' = 0, 'food.quality' = 0.025, 'growth'= 0.05, 'stratification' = 0.01, 'diatom.prop' = 0),
                    diagnostics = T
 )
 
@@ -25,7 +26,9 @@ saveRDS(dsem.data$data,here::here('data-raw','dsem_example_data.rds'))
 
 dsem.data.test = DSEMrand::fit_generalized_dsem(adj.file = here::here('data-raw','example_unknown_dag.csv'),
                      lags.file = here::here('data-raw','example_lags_dag.csv'),
-                     data.file = here::here('data-raw','dsem_example_data.rds')
+                     data.file = here::here('data-raw','dsem_example_data.rds'),
+                     latent_dict = list('food.quality' = c('growth','stratification','diatom.prop')),
+                     detrend = T, standardize = TRUE, control_time_drift = F
 )
 
 saveRDS(dsem.data.test, here::here('data-raw','dsem_example_results.rds'))
@@ -36,10 +39,12 @@ DSEMrand::compare_dsem_results(true_weights_file = here::here('data-raw','exampl
 
 # 1. Generate the random matrix
 ref_adj =  read.csv(here::here('data-raw','example_weight_dag.csv'),row.names = 1) |> as.matrix() |>  sign()
-rand_adj <- DSEMrand::randomize_dsem_graph(ref_adj)
+rand_adj <- DSEMrand::randomize_dsem_graph(ref_adj,
+                                           ref_lags =  here::here('data-raw','example_lags_dag.csv'),
+                                           latent_dict =  list('food.quality' = c('growth','stratification','diatom.prop')))
 
 # 2. Convert it to an igraph object
-g <- igraph::graph_from_adjacency_matrix(rand_adj, mode = "directed")
+g <- igraph::graph_from_adjacency_matrix(rand_adj$adj, mode = "directed")
 
 # 3. Plot using a hierarchical layout
 igraph::plot.igraph(g, 
@@ -51,7 +56,9 @@ igraph::plot.igraph(g,
 
 test.rand = DSEMrand::evaluate_random_graphs(ref_adj,
                                              ref_lags = here::here('data-raw','example_lags_dag.csv'),
-                                             N = 500,deduplicate =T)
+                                             N =100,deduplicate =T,
+                                             latent_dict =  list('food.quality' = c('growth','stratification','diatom.prop'))
+                                             )
 
 
 batch_results = test.rand
@@ -67,7 +74,8 @@ data.file = here::here('data-raw','dsem_example_data.rds')
 tictoc::tic()
 batch_fits = DSEMrand::fit_random_graphs(batch_results = test.rand,
                                          data.file = here::here('data-raw','dsem_example_data.rds'),
-                                         cores = 8
+                                         cores = 8,
+                                         latent_dict =  list('food.quality' = c('growth','stratification','diatom.prop'))
 )
 tictoc::toc()
 

@@ -7,7 +7,8 @@
 count_dsem_permutations(
   ref_adj,
   method = c("auto", "exact", "estimate"),
-  max_iter = 1e+05
+  max_iter = 1e+05,
+  latent_dict = NULL
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ of the permutation space. "exact" forces brute-force combinatorics.
 
 \item{max_iter}{Numeric. The maximum number of permutations to evaluate. If the 
 total possible combinations exceed this, the function defaults to estimation.}
+
+\item{latent_dict}{List. Optional named list mapping latent variables to their indicators.}
 }
 \value{
 A list containing the total unconstrained combinations, the estimated 
@@ -31,12 +34,4 @@ generated from a reference graph while respecting specific constraints
 (preserved sources/sinks, active reachability, no self-loops, conserved edges).
 Uses exact combinatorics for small search spaces and Monte Carlo estimation 
 for large graph spaces.
-}
-\examples{
-\dontrun{
-# Calculate how many valid topologies exist for your reference graph
-perm_results <- count_dsem_permutations(true_adj, method = "auto")
-
-print(perm_results)
-}
 }

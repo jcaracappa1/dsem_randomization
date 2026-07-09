@@ -2,13 +2,21 @@
 #'
 #' Ingests a binary directed acyclic graph (DAG) and temporal lags, translates them
 #' into the "arrow-and-lag" syntax required by the `dsem` package, and fits the 
-#' dynamic structural equation model. `dsem` handles temporal alignments, missing 
-#' data, and simultaneous estimation natively via TMB.
+#' dynamic structural equation model. Includes native handling of "Latent Complexes" 
+#' (measurement models) by automatically fixing anchor parameters for identifiability.
 #'
 #' @param adj.file Character. Path to the CSV file containing the binary adjacency matrix.
 #'        1 indicates an assumed causal edge, 0 indicates no edge.
 #' @param lags.file Character. Path to the CSV file containing the temporal lag matrix.
 #' @param data.file Character. Path to the simulated time series data. Supports `.csv` or `.rds`.
+#' @param latent_dict List. Optional named list mapping latent variables to their 
+#'        indicators. e.g., list("Phytoplankton" = c("diatom", "dino")).
+#' @param detrend Logical. If TRUE, removes linear trends from all observed variables via `lm()` 
+#'        prior to SEM fitting (the "Pre-Detrending" gold standard). Defaults to FALSE.
+#' @param standardize Logical. If TRUE, applies `scale()` (Mean = 0, Variance = 1) to 
+#'        observed variables to prevent computationally singular Hessian matrices. Defaults to TRUE.
+#' @param control_time_drift Logical. If TRUE, injects a Time covariate as a direct structural cause 
+#'        to partial out drift. Defaults to FALSE.
 #'
 #' @return A list containing:
 #'         \itemize{
@@ -17,21 +25,11 @@
 #'           \item \code{estimates}: A clean data frame of the estimated structural path coefficients.
 #'         }
 #' @importFrom dsem dsem dsem_control
-#' @importFrom stats ts
+#' @importFrom stats ts lm resid na.exclude
 #' @export
-#'
-#' @examples
-#' \dontrun{
-#' dsem_results <- fit_generalized_dsem("binary_adj.csv", "lags.csv", "sim_data.rds")
-#' 
-#' # View the generated dsem arrow-and-lag syntax
-#' cat(dsem_results$syntax)
-#' 
-#' # View the formal SEM estimates
-#' print(dsem_results$estimates)
-#' }
 
-fit_generalized_dsem <- function(adj.file, lags.file, data.file) {
+fit_generalized_dsem <- function(adj.file, lags.file, data.file, latent_dict = NULL, 
+                                 detrend = FALSE, standardize = TRUE, control_time_drift = FALSE) {
   
   # 1. Ingest Matrices
   adj <- as.matrix(read.csv(adj.file, row.names = 1))
@@ -52,14 +50,34 @@ fit_generalized_dsem <- function(adj.file, lags.file, data.file) {
   
   n_steps <- nrow(ts_data)
   
-  # Add a Time covariate to control for the baseline drift generated during simulation
+  # Always generate Time as a covariate for detrending or drift control
   ts_data$Time <- 1:n_steps
   
-  # Identify numeric columns (excluding the Time covariate we added)
-  vars_to_scale <- setdiff(colnames(ts_data), "Time")
+  # CRITICAL: Identify observed variables vs pure latent variables (which are 100% NA)
+  obs_vars <- colnames(ts_data)[sapply(ts_data, function(x) !all(is.na(x)))]
+  obs_vars_no_time <- setdiff(obs_vars, "Time")
   
-  # Apply standard scaling (mean = 0, sd = 1) to those columns to prevent Hessian errors
-  ts_data[vars_to_scale] <- scale(ts_data[vars_to_scale])
+  # --- PRE-DETRENDING ---
+  if (detrend) {
+    for (v in obs_vars_no_time) {
+      if (var(ts_data[[v]], na.rm = TRUE) > 0) {
+        fit_lm <- stats::lm(ts_data[[v]] ~ ts_data$Time, na.action = stats::na.exclude)
+        ts_data[[v]] <- stats::resid(fit_lm)
+      }
+    }
+  }
+  
+  # --- STANDARDIZATION / Z-SCORING ---
+  if (standardize) {
+    vars_to_scale <- obs_vars_no_time
+    if (control_time_drift) vars_to_scale <- c(vars_to_scale, "Time")
+    
+    for (v in vars_to_scale) {
+      if (var(ts_data[[v]], na.rm = TRUE) > 0) {
+        ts_data[[v]] <- scale(ts_data[[v]])[, 1]
+      }
+    }
+  }
   
   # Convert data to a formal time-series object required by dsem
   ts_data_matrix <- stats::ts(as.matrix(ts_data))
@@ -67,64 +85,111 @@ fit_generalized_dsem <- function(adj.file, lags.file, data.file) {
   # 3. Build dsem Syntax and Parameter Mapping
   model_syntax <- c()
   
-  # Create a tracking data frame to easily map the raw dsem output back to readable relationships
   path_map <- data.frame(Source = character(), Target = character(), 
                          Lag = numeric(), Param = character(), stringsAsFactors = FALSE)
   
   for (target in colnames(adj)) {
     
-    # Identify parents (causes) based on the binary test structure
     parents <- rownames(adj)[adj[, target] == 1]
-    
-    # Skip if exogenous (no incoming edges)
     if (length(parents) == 0) next
     
-    # Formulate the Time trend control path (Time -> Target, lag = 0)
-    time_param <- paste0("drift_", target)
-    model_syntax <- c(model_syntax, paste("Time ->", target, ", 0 ,", time_param))
-    path_map <- rbind(path_map, data.frame(Source = "Time", Target = target, Lag = 0, Param = time_param))
+    is_indicator <- FALSE
+    if (!is.null(latent_dict)) {
+      if (target %in% unname(unlist(latent_dict))) is_indicator <- TRUE
+    }
+    
+    # Formulate the Time trend control path ONLY if requested
+    if (control_time_drift && !is_indicator) {
+      time_param <- paste0("drift_", target)
+      model_syntax <- c(model_syntax, paste("Time ->", target, ", 0 ,", time_param))
+      path_map <- rbind(path_map, data.frame(Source = "Time", Target = target, Lag = 0, Param = time_param))
+    }
     
     for (p in parents) {
       lag_val <- lags[p, target]
-      
-      # Name the parameter uniquely so we can extract it cleanly later
       param_name <- paste0("path_", p, "_to_", target, "_lag", lag_val)
       
-      # dsem syntax: source -> target, lag, parameter_name
-      path_eq <- paste(p, "->", target, ",", lag_val, ",", param_name)
+      # IDENTIFIABILITY FIX 1: Handle Latent Measurement Model Anchor
+      if (!is.null(latent_dict) && p %in% names(latent_dict) && target %in% latent_dict[[p]]) {
+        if (target == latent_dict[[p]][1]) {
+          # Fix the FIRST indicator's path mathematically to 1 to set Latent variable scale
+          param_name <- "1" 
+        } else {
+          param_name <- paste0("loading_", p, "_to_", target)
+        }
+      }
       
+      path_eq <- paste(p, "->", target, ",", lag_val, ",", param_name)
       model_syntax <- c(model_syntax, path_eq)
       path_map <- rbind(path_map, data.frame(Source = p, Target = target, Lag = lag_val, Param = param_name))
     }
+    
+    # IDENTIFIABILITY FIX 2: 1- and 2-Indicator Variance Traps
+    if (!is.null(latent_dict)) {
+      for (l_node in names(latent_dict)) {
+        inds <- latent_dict[[l_node]]
+        
+        # If 1 or 2 indicators, the math is technically underidentified.
+        # Safest generalized fallback: lock measurement errors to a small constant (0.01)
+        # to force convergence without causing empirical loading contradictions.
+        if (length(inds) <= 2 && target %in% inds) {
+          model_syntax <- c(model_syntax, paste(target, "<->", target, ", 0 , 0.01"))
+        }
+      }
+    }
   }
-  path_map$parameter.id = 1:nrow(path_map)
   
-  # Collapse the syntax vector into a single string separated by newlines
+  # Safely assign parameter IDs tracking only estimated variables (skipping fixed '1' values)
+  path_map$parameter.id <- NA
+  est_counter <- 1
+  for (i in seq_len(nrow(path_map))) {
+    if (path_map$Param[i] != "1") {
+      path_map$parameter.id[i] <- est_counter
+      est_counter <- est_counter + 1
+    }
+  }
+  
   final_syntax <- paste(model_syntax, collapse = "\n")
   
   # 4. Fit the SEM using dsem
-  # We suppress output during fitting to keep the console clean in batch tests
   fit <- dsem::dsem(sem = final_syntax, 
                     tsdata = ts_data_matrix,
-                    control = dsem::dsem_control(quiet = TRUE))
+                    estimate_mu = obs_vars,
+                    control = dsem::dsem_control(quiet = TRUE, newton_loops = 2))
   
   # 5. Extract Parameter Estimates
   est_raw <- as.data.frame(summary(fit))
-  est_raw = dplyr::rename(est_raw,parameter.id = 'parameter')
   
-  # Merge the raw TMB estimates with our path map to filter out variances/intercepts
+  if ("parameter" %in% colnames(est_raw)) {
+    colnames(est_raw)[colnames(est_raw) == "parameter"] <- "parameter.id"
+  } else {
+    est_raw$parameter.id <- 1:nrow(est_raw) 
+  }
+  
   estimates_df <- merge(path_map, est_raw, by = "parameter.id", all.x = TRUE)
   
-  # Rename standard TMB output columns to match the previous reporting structure
-  colnames(estimates_df)[colnames(estimates_df) == "Std. Error"] <- "Std_Error"
-  colnames(estimates_df)[colnames(estimates_df) == "z value"] <- "z_Value"
-  colnames(estimates_df)[colnames(estimates_df) == "Pr(>|z|)"] <- "p_Value"
+  # Cleanly inject data for any mathematically fixed paths
+  fixed_idx <- which(estimates_df$Param == "1")
+  if (length(fixed_idx) > 0) {
+    estimates_df$Estimate[fixed_idx] <- 1
+    if ("Std. Error" %in% colnames(estimates_df)) estimates_df$"Std. Error"[fixed_idx] <- 0
+  }
   
-  # Order and clean columns
+  colnames(estimates_df)[colnames(estimates_df) == "Std. Error"] <- "Std_Error"
+  colnames(estimates_df)[tolower(colnames(estimates_df)) == "z value"] <- "z_value"
+  colnames(estimates_df)[tolower(colnames(estimates_df)) == "pr(>|z|)"] <- "p_value"
+  
+  if (!"z_value" %in% colnames(estimates_df)) estimates_df$z_value <- NA
+  if (!"p_value" %in% colnames(estimates_df)) estimates_df$p_value <- NA
+  
   estimates_df <- estimates_df[, c("Target", "Source", "Lag", "Estimate", "Std_Error", "z_value", "p_value")]
   
-  # Sort so Time drift components appear first for each target, followed by structural edges
-  estimates_df <- estimates_df[order(estimates_df$Target, estimates_df$Source != "Time"), ]
+  if (control_time_drift) {
+    estimates_df <- estimates_df[order(estimates_df$Target, estimates_df$Source != "Time"), ]
+  } else {
+    estimates_df <- estimates_df[order(estimates_df$Target, estimates_df$Source), ]
+  }
+  
   rownames(estimates_df) <- NULL
   
   return(list(

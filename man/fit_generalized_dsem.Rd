@@ -4,7 +4,15 @@
 \alias{fit_generalized_dsem}
 \title{Perform Generalized DSEM Analysis via the `dsem` Package}
 \usage{
-fit_generalized_dsem(adj.file, lags.file, data.file)
+fit_generalized_dsem(
+  adj.file,
+  lags.file,
+  data.file,
+  latent_dict = NULL,
+  detrend = FALSE,
+  standardize = TRUE,
+  control_time_drift = FALSE
+)
 }
 \arguments{
 \item{adj.file}{Character. Path to the CSV file containing the binary adjacency matrix.
@@ -13,6 +21,18 @@ fit_generalized_dsem(adj.file, lags.file, data.file)
 \item{lags.file}{Character. Path to the CSV file containing the temporal lag matrix.}
 
 \item{data.file}{Character. Path to the simulated time series data. Supports `.csv` or `.rds`.}
+
+\item{latent_dict}{List. Optional named list mapping latent variables to their 
+indicators. e.g., list("Phytoplankton" = c("diatom", "dino")).}
+
+\item{detrend}{Logical. If TRUE, removes linear trends from all observed variables via `lm()` 
+prior to SEM fitting (the "Pre-Detrending" gold standard). Defaults to FALSE.}
+
+\item{standardize}{Logical. If TRUE, applies `scale()` (Mean = 0, Variance = 1) to 
+observed variables to prevent computationally singular Hessian matrices. Defaults to TRUE.}
+
+\item{control_time_drift}{Logical. If TRUE, injects a Time covariate as a direct structural cause 
+to partial out drift. Defaults to FALSE.}
 }
 \value{
 A list containing:
@@ -25,17 +45,6 @@ A list containing:
 \description{
 Ingests a binary directed acyclic graph (DAG) and temporal lags, translates them
 into the "arrow-and-lag" syntax required by the `dsem` package, and fits the 
-dynamic structural equation model. `dsem` handles temporal alignments, missing 
-data, and simultaneous estimation natively via TMB.
-}
-\examples{
-\dontrun{
-dsem_results <- fit_generalized_dsem("binary_adj.csv", "lags.csv", "sim_data.rds")
-
-# View the generated dsem arrow-and-lag syntax
-cat(dsem_results$syntax)
-
-# View the formal SEM estimates
-print(dsem_results$estimates)
-}
+dynamic structural equation model. Includes native handling of "Latent Complexes" 
+(measurement models) by automatically fixing anchor parameters for identifiability.
 }

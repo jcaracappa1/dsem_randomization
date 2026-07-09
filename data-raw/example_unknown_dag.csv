@@ -1,6 +1,10 @@
-,bot.temp,diatom,juv.bio,adult.bio,catch
-bot.temp,0,1,1,1,0
-diatom,0,0,1,1,0
-juv.bio,0,0,0,1,0
-adult.bio,0,0,1,0,1
-catch,0,0,0,0,0
+,bot.temp,diatom,juv.bio,adult.bio,catch,food.quality,growth,stratification,diatom.prop
+bot.temp,1,0,1,1,0,0,0,0,0
+diatom,0,1,0,0,0,1,0,0,0
+juv.bio,0,0,0,1,0,0,0,0,0
+adult.bio,0,0,1,0,1,0,0,0,0
+catch,0,0,0,0,0,0,0,0,0
+food.quality,0,0,1,1,0,1,1,1,1
+growth,0,0,0,0,0,0,0,0,0
+stratification,0,0,0,0,0,0,0,0,0
+diatom.prop,0,0,0,0,0,0,0,0,0
