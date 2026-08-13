@@ -64,23 +64,30 @@ test.rand = DSEMrand::evaluate_random_graphs(ref_adj,
 batch_results = test.rand
 data.file = here::here('data-raw','dsem_example_data.rds')
 
-# tictoc::tic()
-# batch_fits = DSEMrand::fit_random_graphs(batch_results = test.rand,
-#                                       data.file = here::here('data-raw','dsem_example_data.rds'),
-#                                       cores = 1
-# )
-# tictoc::toc()
-
-tictoc::tic()
 batch_fits = DSEMrand::fit_random_graphs(batch_results = test.rand,
                                          data.file = here::here('data-raw','dsem_example_data.rds'),
                                          cores = 8,
                                          latent_dict =  list('food.quality' = c('growth','stratification','diatom.prop'))
 )
-tictoc::toc()
 
 results = DSEMrand::compare_dsem_distributions(ref_fit = dsem.data.test, batch_fits, plot =T)
 results$plot
 results$model_fit_comparison
 results$parameter_comparison
+
+DSEMrand::run_dsem_sensitivity(adj_file =here::here('data-raw','example_unknown_dag.csv'),
+                               lags_file = here::here('data-raw', 'example_lags_dag.csv'),
+                               node_classes <- list(
+                                 source = c("bot.temp", "diatom"),
+                                 intermediate = c("juv.bio", "adult.bio"),
+                                 sink = c("catch"),
+                                 measurement = c("growth", "stratification", "diatom.prop")
+                                ),
+                               latent_dict <- list('food.quality' = c('growth', 'stratification', 'diatom.prop')),
+                               base_mu <- c('bot.temp'=5, 'diatom'=1E6, 'juv.bio'=1E5, 'adult.bio'=1E4, 'catch'=1E3, 'food.quality'=100, 'growth'=10, 'stratification'=10, 'diatom.prop'=0.7),
+                               base_sd <- c('bot.temp'=1, 'diatom'=1E3, 'juv.bio'=1E3, 'adult.bio'=1E3, 'catch'=1E2, 'food.quality'=10, 'growth'=3, 'stratification'=3, 'diatom.prop'=0.05),
+                               base_slope <- c('bot.temp'=0.025, 'diatom'=0, 'juv.bio'=-0.01, 'adult.bio'=-0.05, 'catch'=0, 'food.quality'=0.025, 'growth'=0.05, 'stratification'=0.01, 'diatom.prop'=0),
+                               out_dir = here::here('data')
+                               
+)
 

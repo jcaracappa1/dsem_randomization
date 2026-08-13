@@ -251,7 +251,7 @@ for (n_len in ts_lengths) {
   sensitivity_results <- rbind(sensitivity_results, res)
 }
 
-saveRDS(sensitivity_results, 'Z:/atlantiseof/data/sensitivity_results.rds')
+saveRDS(sensitivity_results, here::here('data','sensitivity_results.rds'))
 # ==========================================
 # VIEW RESULTS & PLOT
 # ==========================================
@@ -267,3 +267,5 @@ ggplot(sensitivity_results %>% filter(!is.na(NLL_Percentile)), aes(x = Level, y 
        subtitle = "Red line indicates p=0.05 (significance threshold)",
        y = "Model Fit (NLL) Percentile vs Random Null",
        x = "Degradation Level (Fraction NA / Noise Multiplier / TS Length)")
+
+

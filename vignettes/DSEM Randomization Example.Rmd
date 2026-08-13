@@ -1,0 +1,207 @@
+---
+title: "DSEMrand: Full Workflow and Sensitivity Analysis"
+author: "Joe Caracappa"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{DSEMrand: Full Workflow and Sensitivity Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+library(igraph)
+library(DSEMrand)
+```
+
+## Introduction
+
+This vignette demonstrates the complete end-to-end workflow of the DSEMrand package. We will walk through simulating state-space ecosystem data from a hypothesized Directed Acyclic Graph (DAG), fitting a dynamic structural equation model (DSEM), and rigorously validating the structural topology using Monte Carlo randomizations and automated sensitivity testing.
+
+### The Reference Ecosystem Model
+
+First, we load our hypothesized ecosystem topology and visualize it. This reference DAG defines the assumed causal pathways and temporal lags in our system.
+
+```{r}
+# 1. Generate the reference matrix
+ref_adj <- read.csv(here::here('data-raw', 'example_weight_dag.csv'), row.names = 1) |> as.matrix()
+ref_adj[which(ref_adj != 0)] <- 1
+
+# 2. Convert it to an igraph object
+p <- igraph::graph_from_adjacency_matrix(ref_adj, mode = "directed")
+
+# 3. Plot using a hierarchical layout
+igraph::plot.igraph(p, 
+                    layout = igraph::layout_with_sugiyama(p)$layout, 
+                    vertex.color = "lightblue", 
+                    vertex.size = 30, 
+                    edge.arrow.size = 0.6,
+                    main = "Reference Hierarchical DAG")
+```
+
+### 2. Simulating Time Series Data
+
+To test our methodology, we simulate a robust dataset containing 300 time-steps. We apply varying levels of baseline drift, noise, and define a latent "food quality" construct measured by three physical/biological indicators.
+
+```{r}
+dsem.data <- DSEMrand::simulate_dsem_data(
+  weights.file = here::here('data-raw', 'example_weight_dag.csv'),
+  lags.file = here::here('data-raw', 'example_lags_dag.csv'),
+  latent_vars = 'food.quality',
+  n_steps = 300,
+  var.mu = c('bot.temp' = 5, 'diatom' = 1E6, 'juv.bio' = 1E5, 'adult.bio' = 1E4, 'catch' = 1E3, 'food.quality' = 100, 'growth' = 10, 'stratification' = 10, 'diatom.prop' = 0.7),
+  var.sd = c('bot.temp' = 1, 'diatom' = 1E3, 'juv.bio' = 1E3, 'adult.bio' = 1E3, 'catch' = 1E2, 'food.quality' = 10, 'growth' = 3, 'stratification' = 3, 'diatom.prop' = 0.05),
+  var.slope = c('bot.temp' = 0.025, 'diatom' = 0, 'juv.bio' = -0.01, 'adult.bio' = -0.05, 'catch' = 0, 'food.quality' = 0.025, 'growth' = 0.05, 'stratification' = 0.01, 'diatom.prop' = 0),
+  diagnostics = TRUE
+)
+
+# Print diagnostic summary showing true correlation footprints
+print(dsem.data$diagnostic_summary)
+
+# Save for downstream modeling
+saveRDS(dsem.data$data, here::here('data-raw', 'dsem_example_data.rds'))
+```
+
+### 3. Fitting the Generalized DSEM
+
+Next, we run the simulated, raw-scale data through our automated DSEM solver. The function automatically detrends, standardizes, and anchors our 3-indicator latent complex to ensure strict mathematical identifiability.
+
+```{r}
+dsem.data.test <- DSEMrand::fit_generalized_dsem(
+  adj.file = here::here('data-raw', 'example_unknown_dag.csv'),
+  lags.file = here::here('data-raw', 'example_lags_dag.csv'),
+  data.file = here::here('data-raw', 'dsem_example_data.rds'),
+  latent_dict = list('food.quality' = c('growth', 'stratification', 'diatom.prop')),
+  detrend = TRUE, 
+  standardize = TRUE, 
+  control_time_drift = FALSE
+)
+
+# Display the recovered structural estimates
+print(dsem.data.test$estimates)
+
+saveRDS(dsem.data.test, here::here('data-raw', 'dsem_example_results.rds'))
+```
+
+We can compare these estimates back to our known ground-truth to verify that the estimator successfully unpacked the complex topology.
+
+```{r}
+comparison_table <- DSEMrand::compare_dsem_results(
+  true_weights_file = here::here('data-raw', 'example_weight_dag.csv'),
+  dsem_output = readRDS(here::here('data-raw', 'dsem_example_results.rds'))
+)
+print(comparison_table)
+```
+
+### 4. Network Randomization
+
+To prove our results aren't just spurious correlations, we generate empirical null models by randomizing the network edges. Importantly, the randomization safely preserves the measurement structure of the food.quality latent complex.
+
+```{r}
+ref_adj_sign <- read.csv(here::here('data-raw', 'example_weight_dag.csv'), row.names = 1) |> as.matrix() |> sign()
+
+rand_adj <- DSEMrand::randomize_dsem_graph(
+  ref_adj_sign,
+  ref_lags = here::here('data-raw', 'example_lags_dag.csv'),
+  latent_dict = list('food.quality' = c('growth', 'stratification', 'diatom.prop'))
+)
+
+# Plot one of the randomized topologies
+g <- igraph::graph_from_adjacency_matrix(rand_adj$adj, mode = "directed")
+igraph::plot.igraph(g, 
+                    layout = igraph::layout_with_sugiyama(g)$layout, 
+                    vertex.color = "lightblue", 
+                    vertex.size = 30, 
+                    edge.arrow.size = 0.6,
+                    main = "Randomized Hierarchical DAG")
+```
+
+### 5. Monte Carlo Structural Robustness
+
+We generate a batch of 100 unique random topologies and fit the DSEM model to every single one to create an empirical null distribution for our Negative Log-Likelihood (NLL) and our parameter estimates.
+
+```{r}
+# 1. Generate 100 unique valid graphs
+batch_results <- DSEMrand::evaluate_random_graphs(
+  ref_adj_sign,
+  ref_lags = here::here('data-raw', 'example_lags_dag.csv'),
+  N = 100, 
+  deduplicate = TRUE,
+  latent_dict = list('food.quality' = c('growth', 'stratification', 'diatom.prop'))
+)
+
+# 2. Fit the data to all 100 graphs in parallel
+batch_fits <- DSEMrand::fit_random_graphs(
+  batch_results = batch_results,
+  data.file = here::here('data-raw', 'dsem_example_data.rds'),
+  cores = 8,
+  latent_dict = list('food.quality' = c('growth', 'stratification', 'diatom.prop'))
+)
+
+# 3. Compare the Reference fit against the Random Batch
+results <- DSEMrand::compare_dsem_distributions(
+  ref_fit = dsem.data.test, 
+  batch_fits, 
+  plot = TRUE
+)
+
+saveRDS(results,here::here('data','dsem_randomization_results.rds'))
+```
+
+```{R}
+
+results = readRDS(here::here('data','dsem_randomization_results.rds'))
+# Visualize the overall structural dependency
+print(results$plot)
+
+# Review which specific pathways are highly dependent on the reference topology
+print(results$model_fit_comparison)
+print(results$parameter_comparison)
+```
+
+### 6. Sensitivity Analysis
+
+Finally, we stress-test the methodology by systematically degrading the data. We sequentially introduce missing data points, spike the background noise (variance), and shrink the time-series length to identify the exact thresholds where our reference topology fails to outperform random noise.
+
+```{r, message = T, warning = F}
+# Run the automated sensitivity workflow
+# sens_results <- DSEMrand::run_dsem_sensitivity(
+#   adj_file = here::here('data-raw', 'example_unknown_dag.csv'),
+#   lags_file = here::here('data-raw', 'example_lags_dag.csv'),
+#   node_classes = list(
+#     source = c("bot.temp", "diatom"),
+#     intermediate = c("juv.bio", "adult.bio"),
+#     sink = c("catch"),
+#     measurement = c("growth", "stratification", "diatom.prop")
+#   ),
+#   latent_dict = list('food.quality' = c('growth', 'stratification', 'diatom.prop')),
+#   base_mu = c('bot.temp'=5, 'diatom'=1E6, 'juv.bio'=1E5, 'adult.bio'=1E4, 'catch'=1E3, 'food.quality'=100, 'growth'=10, 'stratification'=10, 'diatom.prop'=0.7),
+#   base_sd = c('bot.temp'=1, 'diatom'=1E3, 'juv.bio'=1E3, 'adult.bio'=1E3, 'catch'=1E2, 'food.quality'=10, 'growth'=3, 'stratification'=3, 'diatom.prop'=0.05),
+#   base_slope = c('bot.temp'=0.025, 'diatom'=0, 'juv.bio'=-0.01, 'adult.bio'=-0.05, 'catch'=0, 'food.quality'=0.025, 'growth'=0.05, 'stratification'=0.01, 'diatom.prop'=0),
+#   out_dir = here::here('data'),
+#   cores = 6,
+#   N_rand = 5,
+#   M_preflight = 5,
+#   max_ts_length = 400
+# )
+# saveRDS(sens_results, here::here('data','sensitivity_results.rds'))
+```
+
+```{r}
+sens_results = readRDS(here::here('data','sensitivity_results_all.rds'))
+# 1. Inspect Baseline Robustness (Pre-Flight Check)
+
+print(sens_results$preflight_summary)
+print(sens_results$plot_preflight)
+
+# 2. Inspect Degradation Trajectories
+print(sens_results$plot_sensitivity)
+```
+
