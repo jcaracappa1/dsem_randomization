@@ -11,7 +11,10 @@ run_sensitivity_iteration(
   iter_name,
   latent_dict,
   N_rand,
-  cores
+  cores,
+  detrend,
+  standardize,
+  control_time_drift
 )
 }
 \description{

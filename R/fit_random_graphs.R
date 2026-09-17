@@ -27,7 +27,7 @@
 #' print(batch_fits[[1]]$estimates)
 #' }
 
-fit_random_graphs <- function(batch_results, data.file, cores = 1, latent_dict = NULL) {
+fit_random_graphs <- function(batch_results, data.file, cores = 1, latent_dict = NULL, detrend, standardize, control_time_drift) {
   
   graphs_list <- batch_results$graphs
   lags_list <- batch_results$lags
@@ -54,7 +54,11 @@ fit_random_graphs <- function(batch_results, data.file, cores = 1, latent_dict =
       fit_generalized_dsem(adj.file = tmp_adj_file, 
                            lags.file = tmp_lags_file, 
                            data.file = data.file,
-                           latent_dict = latent_dict)
+                           latent_dict = latent_dict,
+                           detrend = detrend,
+                           standardize = standardize,
+                           control_time_drift = control_time_drift
+                            )
     }, error = function(e) {
       warning(sprintf("Fitting failed for graph index %d (Iter %d): %s", 
                       i, diag_df$Iter[i], e$message), call. = FALSE)
@@ -76,7 +80,8 @@ fit_random_graphs <- function(batch_results, data.file, cores = 1, latent_dict =
     # Export necessary variables and the fitting function to the worker nodes
     parallel::clusterExport(cl, 
                             varlist = c("graphs_list", "lags_list", "diag_df", 
-                                        "data.file", "fit_generalized_dsem", "latent_dict"), 
+                                        "data.file", "fit_generalized_dsem", "latent_dict",
+                                        "detrend","standardize","control_time_drift"), 
                             envir = environment())
     
     # Ensure workers have the required package loaded

@@ -5,6 +5,7 @@
 \title{Run DSEM Sensitivity Analysis Workflow}
 \usage{
 run_dsem_sensitivity(
+  weights_file,
   adj_file,
   lags_file,
   node_classes,
@@ -16,47 +17,16 @@ run_dsem_sensitivity(
   max_ts_length = 400,
   M_preflight = 30,
   N_rand = 30,
-  cores = 1
+  cores = 1,
+  missing_fractions = c(0, 0.1, 0.25, 0.5),
+  variance_multipliers = c(1, 2, 5, 10),
+  ts_length_fractions = c(1, 0.5, 0.25, 0.1),
+  detrend = detrend,
+  standardize = standardize,
+  control_time_drift = control_time_drift,
+  jumpstart = FALSE
 )
 }
-\arguments{
-\item{adj_file}{Character. Path to the reference DAG adjacency matrix CSV.}
-
-\item{lags_file}{Character. Path to the reference DAG temporal lags matrix CSV.}
-
-\item{node_classes}{List. Named list mapping node classes to variable names 
-(e.g., list(source = c("A"), intermediate = c("B"), sink = c("C"), measurement = c("D"))).}
-
-\item{latent_dict}{List. Optional named list mapping latent variables to their indicators. Defaults to NULL.}
-
-\item{out_dir}{Character. Directory path where the results RDS and plots will be saved.}
-
-\item{base_mu}{Numeric vector. A named vector of baseline means for simulation.}
-
-\item{base_sd}{Numeric vector. A named vector of baseline standard deviations for simulation.}
-
-\item{base_slope}{Numeric vector. A named vector of baseline time-trend slopes for simulation.}
-
-\item{max_ts_length}{Integer. The maximum time series length for the baseline dataset. Defaults to 400.}
-
-\item{M_preflight}{Integer. Number of iterations for the baseline robustness pre-flight check. Defaults to 30.}
-
-\item{N_rand}{Integer. Number of random topologies to evaluate per sensitivity step. Defaults to 30.}
-
-\item{cores}{Integer. Number of CPU cores to use for parallel processing. Defaults to 1.}
-}
-\value{
-A list containing:
-        \itemize{
-          \item \code{results_df}: The full sensitivity analysis data frame.
-          \item \code{preflight_summary}: The baseline robustness summary table.
-          \item \code{plot_preflight}: The ggplot object for pre-flight baseline stability.
-          \item \code{plot_sensitivity}: The ggplot object for the sensitivity degradation curves.
-        }
-}
 \description{
-This function automates a stress-test of the DSEM methodology by iteratively 
-degrading data quality (missingness), increasing noise (variance), and 
-shrinking sample sizes (n_steps). It records the Negative Log-Likelihood (NLL) 
-percentile to identify the exact thresholds where the structural model breaks down.
+Run DSEM Sensitivity Analysis Workflow
 }

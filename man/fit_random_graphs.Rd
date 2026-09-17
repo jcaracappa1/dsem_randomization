@@ -4,7 +4,15 @@
 \alias{fit_random_graphs}
 \title{Batch Fit DSEM on Randomized Graphs}
 \usage{
-fit_random_graphs(batch_results, data.file, cores = 1, latent_dict = NULL)
+fit_random_graphs(
+  batch_results,
+  data.file,
+  cores = 1,
+  latent_dict = NULL,
+  detrend,
+  standardize,
+  control_time_drift
+)
 }
 \arguments{
 \item{batch_results}{List. The output object from \code{evaluate_random_graphs} 
