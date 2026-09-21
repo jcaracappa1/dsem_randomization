@@ -3,23 +3,23 @@
 #' Reads two CSV files containing named matrices for causal weights and temporal lags. 
 #' Organizes the instantaneous effects into a DAG, and generates simulated time-series 
 #' data respecting both immediate and lagged relationships. Causal effects are 
-#' propagated as standardized anomalies internally to prevent variance cascading, 
-#' but the final output retains its raw, realistic ecological scales and trends.
+#' propagated as standardized anomalies using `process.sd`. Measurement error is 
+#' then injected via `observation.sd` to decouple structural signals from environmental noise.
 #'
 #' @param weights.file Character. Path to the CSV file containing the weighted adjacency matrix. 
 #' @param lags.file Character. Path to the CSV file containing the lag matrix. 
 #' @param n_steps Integer. The number of time steps (rows) to generate for the time series.
 #' @param var.mu Numeric vector. A named vector of baseline means (intercepts).
-#' @param var.sd Numeric vector. A named vector of standard deviations for the noise term.
+#' @param process.sd Numeric vector. A named vector of standard deviations for internal state stochasticity.
+#' @param observation.sd Numeric vector. A named vector of standard deviations for measurement error.
 #' @param var.slope Numeric vector. A named vector of time-trend slopes.
 #' @param latent_vars Character vector. Optional. Names of nodes to treat as latent. 
-#'        Their columns will be set to NA in the output data to force state-space estimation.
 #' @param diagnostics Logical. If TRUE, plots the DAG, creates a faceted plot of the data, 
-#'        and prints a diagnostic table of expected weights vs. empirical correlations.
+#'        and prints a diagnostic table.
 #'
 #' @return If `diagnostics = FALSE`, returns a data frame of the generated time series. 
 #'         If `diagnostics = TRUE`, returns a list containing `$data` (the time series with 
-#'         latents masked), `$true_states` (the Oracle dataset with true latent values), 
+#'         latents masked), `$true_states` (the Oracle dataset with true latent values and NO obs error), 
 #'         and `$diagnostic_summary`.
 #' @importFrom igraph graph_from_adjacency_matrix topo_sort is_dag E plot.igraph get.edgelist
 #' @importFrom ggplot2 ggplot aes geom_line facet_wrap theme_minimal labs
@@ -27,7 +27,7 @@
 #' @importFrom stats rnorm cor
 #' @export
 
-simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd, var.slope, latent_vars = NULL, diagnostics = FALSE) {
+simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, process.sd, observation.sd, var.slope, latent_vars = NULL, diagnostics = FALSE) {
   
   # 1. Ingest and Validate
   adj_matrix <- as.matrix(read.csv(weights.file, row.names = 1))
@@ -41,7 +41,8 @@ simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd,
   
   # Safeguard scalar arguments: expand single numbers to fully named vectors
   if (length(var.mu) == 1 && is.null(names(var.mu))) var.mu <- setNames(rep(var.mu, length(node_names)), node_names)
-  if (length(var.sd) == 1 && is.null(names(var.sd))) var.sd <- setNames(rep(var.sd, length(node_names)), node_names)
+  if (length(process.sd) == 1 && is.null(names(process.sd))) process.sd <- setNames(rep(process.sd, length(node_names)), node_names)
+  if (length(observation.sd) == 1 && is.null(names(observation.sd))) observation.sd <- setNames(rep(observation.sd, length(node_names)), node_names)
   if (length(var.slope) == 1 && is.null(names(var.slope))) var.slope <- setNames(rep(var.slope, length(node_names)), node_names)
   
   inst_adj_matrix <- adj_matrix
@@ -54,16 +55,16 @@ simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd,
   
   topological_order <- names(igraph::topo_sort(g_inst))
   
-  # Initialize the output matrix
+  # Initialize the output matrix for TRUE states
   sim_data <- matrix(0, nrow = n_steps, ncol = length(node_names))
   colnames(sim_data) <- node_names
   
-  # 2. Iterative Time-Step Simulation Loop
+  # 2. Iterative Time-Step Simulation Loop (Propagating PROCESS Error)
   for (t in 1:n_steps) {
     for (node in topological_order) {
       
-      # Generate unique native baseline (intercept + slope + residual noise)
-      baseline <- var.mu[node] + (var.slope[node] * t) + rnorm(1, mean = 0, sd = var.sd[node])
+      # Generate unique native baseline with INTERNAL process noise
+      baseline <- var.mu[node] + (var.slope[node] * t) + rnorm(1, mean = 0, sd = process.sd[node])
       
       causal_effect <- 0
       parent_nodes <- rownames(adj_matrix)[adj_matrix[, node] != 0]
@@ -74,21 +75,19 @@ simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd,
         
         t_parent <- t - lag
         
-        # If history doesn't exist yet (t <= lag), skip to assume 0 causal input
         if (t_parent <= 0) next
         
         parent_val <- sim_data[t_parent, parent]
         
-        # Internally calculate anomaly to prevent massive scales from cascading downstream
         parent_expected_baseline <- var.mu[parent] + (var.slope[parent] * t_parent)
         parent_anomaly <- parent_val - parent_expected_baseline
         
-        p_sd <- if (is.na(var.sd[parent]) || var.sd[parent] <= 0) 1e-6 else var.sd[parent]
-        c_sd <- if (is.na(var.sd[node]) || var.sd[node] <= 0) 1e-6 else var.sd[node]
+        # Causal scaling relies entirely on process.sd
+        p_sd <- if (is.na(process.sd[parent]) || process.sd[parent] <= 0) 1e-6 else process.sd[parent]
+        c_sd <- if (is.na(process.sd[node]) || process.sd[node] <= 0) 1e-6 else process.sd[node]
         
         parent_z <- parent_anomaly / p_sd
         
-        # Multiply weight as a standardized correlation, scaled to child's native variance
         scaled_effect <- weight * parent_z * c_sd
         causal_effect <- causal_effect + scaled_effect
       }
@@ -97,10 +96,17 @@ simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd,
     }
   }
   
-  # 3. Handle Latent Variable Masking (Retaining Raw Scales)
-  df_raw <- as.data.frame(sim_data) 
-  df_true <- df_raw # "Oracle" dataset retains its raw, realistic scales
-  df_sim <- df_true
+  # 3. Inject OBSERVATION Error Post-Hoc
+  obs_data <- sim_data
+  for (node in node_names) {
+    # Add measurement noise to the fully generated structural timeseries
+    obs_data[, node] <- sim_data[, node] + rnorm(n_steps, mean = 0, sd = observation.sd[node])
+  }
+  
+  # 4. Handle Latent Variable Masking
+  df_true <- as.data.frame(sim_data) # "Oracle" dataset retains pure process states (no obs error)
+  df_raw <- as.data.frame(obs_data)  # Raw observed data
+  df_sim <- df_raw                   # Final masked data
   
   if (!is.null(latent_vars)) {
     for (lv in latent_vars) {
@@ -112,7 +118,7 @@ simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd,
     }
   }
   
-  # 4. Diagnostics Suite
+  # 5. Diagnostics Suite
   if (diagnostics) {
     message("--- Running DSEM Diagnostics ---")
     
@@ -137,7 +143,7 @@ simulate_dsem_data <- function(weights.file, lags.file, n_steps, var.mu, var.sd,
       ggplot2::facet_wrap(~Variable, scales = "free_y", ncol = 1) +
       ggplot2::theme_minimal() + 
       ggplot2::theme(legend.position = "none") +
-      ggplot2::labs(title = "Simulated Time Series by Node (Raw Scales)")
+      ggplot2::labs(title = "Simulated Time Series by Node (Observed Scales)")
     print(p)
     
     diag_results <- data.frame(Parent = character(), Child = character(), 

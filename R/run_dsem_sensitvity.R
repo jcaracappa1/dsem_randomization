@@ -2,7 +2,11 @@
 #' 
 #' @export
 run_sensitivity_iteration <- function(sim_data, ref_adj_file, ref_lags_file, iter_name, 
-                                      latent_dict, N_rand, cores, detrend, standardize, control_time_drift) {
+                                      latent_dict, N_rand, cores, detrend, standardize, 
+                                      control_time_drift, seed) {
+  
+  # Lock in the seed for the random topology generation
+  set.seed(seed)
   
   tmp_data_file <- tempfile(fileext = ".rds")
   saveRDS(sim_data, tmp_data_file)
@@ -41,10 +45,9 @@ run_sensitivity_iteration <- function(sim_data, ref_adj_file, ref_lags_file, ite
   
   message(sprintf("    -> [COMPLETE] NLL Percentile: %.4f", nll_pct))
   
-  # Aggressively clear large objects and force RAM garbage collection
   unlink(tmp_data_file)
   rm(batch_fits, batch_eval, ref_fit)
-  gc(verbose = FALSE, reset = TRUE) # Deep garbage collection
+  gc(verbose = FALSE, reset = TRUE) 
   
   return(data.frame(Scenario = iter_name, NLL_Percentile = nll_pct, Status = "Success"))
 }
@@ -53,23 +56,25 @@ run_sensitivity_iteration <- function(sim_data, ref_adj_file, ref_lags_file, ite
 #'
 #' @export
 run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes, latent_dict = NULL, out_dir,
-                                 base_mu, base_sd, base_slope, 
+                                 base_mu, base_process_sd, base_observation_sd, base_slope, 
                                  max_ts_length = 400, M_preflight = 30, N_rand = 30, cores = 1,
                                  missing_fractions = c(0, 0.1, 0.25, 0.50),
                                  variance_multipliers = c(1, 2, 5, 10),
                                  ts_length_fractions = c(1, 0.5, 0.25, 0.1),
-                                 detrend = detrend, 
-                                 standardize = standardize, 
-                                 control_time_drift = control_time_drift,
-                                 jumpstart = FALSE) {
+                                 detrend = TRUE, 
+                                 standardize = TRUE, 
+                                 control_time_drift = FALSE,
+                                 jumpstart = FALSE,
+                                 seed = 42,
+                                 max_attempts = 3) { 
+  
+  # Set global baseline seed
+  set.seed(seed)
   
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-  
-  # Create intermediates directory for memory-safe disk writing
   int_dir <- file.path(out_dir, "intermediates")
   if (!dir.exists(int_dir)) dir.create(int_dir, recursive = TRUE)
   
-  # Paths for persistent pre-flight objects
   pf_summary_file <- file.path(int_dir, "preflight_summary.rds")
   pf_plot_file <- file.path(int_dir, "preflight_plot.rds")
   master_data_file <- file.path(int_dir, "sim_data_master.rds")
@@ -90,16 +95,18 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
     message(sprintf("Running baseline data generation and DSEM fitting %d times in parallel (cores = %d)...", M_preflight, cores))
     
     cl <- parallel::makeCluster(cores)
+    parallel::clusterSetRNGStream(cl, iseed = seed)
+    
     parallel::clusterExport(cl, varlist = c(
       "weights_file", "adj_file", "lags_file", "max_ts_length", 
-      "base_mu", "base_sd", "base_slope", "latent_dict",
+      "base_mu", "base_process_sd", "base_observation_sd", "base_slope", "latent_dict",
       "simulate_dsem_data", "fit_generalized_dsem"
     ), envir = environment())
     
     preflight_results_list <- parallel::parLapply(cl, 1:M_preflight, function(i) {
-      sim_data <- simulate_dsem_data(weights_file, lags_file, n_steps = max_ts_length, 
-                                     var.mu = base_mu, var.sd = base_sd, var.slope = base_slope, 
-                                     latent_vars = names(latent_dict),diagnostics = F)
+      sim_data <- simulate_dsem_data(weights.file = weights_file, lags.file = lags_file, n_steps = max_ts_length, 
+                                     var.mu = base_mu, process.sd = base_process_sd, observation.sd = base_observation_sd, 
+                                     var.slope = base_slope, latent_vars = names(latent_dict), diagnostics = FALSE)
       
       tmp_preflight_file <- tempfile(fileext = ".rds")
       saveRDS(sim_data, tmp_preflight_file)
@@ -141,9 +148,7 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
     message(sprintf("\nPre-Flight Results: %d out of %d iterations succeeded (%.1f%% Success Rate).", 
                     (M_preflight - failed_iters), M_preflight, success_rate * 100))
     
-    if (success_rate < 0.5) {
-      stop("\nPRE-FLIGHT FAILED: The baseline model failed to solve on >50% of datasets. The model is too unstable to proceed.")
-    }
+    if (success_rate < 0.5) stop("\nPRE-FLIGHT FAILED: The baseline model failed to solve on >50% of datasets.")
     
     preflight_df <- do.call(rbind, preflight_params)
     
@@ -173,9 +178,11 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
     saveRDS(p_preflight, pf_plot_file)
     
     message("\nSUCCESS: Pre-flight check passed! Generating final Master Baseline Dataset...")
+    
+    set.seed(seed)
     sim_data_master <- simulate_dsem_data(weights.file = weights_file, lags.file = lags_file, n_steps = max_ts_length, 
-                                          var.mu = base_mu, var.sd = base_sd, var.slope = base_slope, 
-                                          latent_vars = names(latent_dict))
+                                          var.mu = base_mu, process.sd = base_process_sd, observation.sd = base_observation_sd, 
+                                          var.slope = base_slope, latent_vars = names(latent_dict))
     saveRDS(sim_data_master, master_data_file)
   }
   
@@ -202,25 +209,41 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
       
       message(sprintf("\n[Exp 1: %d/%d] Running: %s", counter, total_exp1, iter_label))
       
-      sim_data <- sim_data_master
-      targets <- node_classes[[class_name]]
+      attempt <- 1
+      success <- FALSE
       
-      for (node in targets) {
-        if (frac > 0) {
-          na_indices <- sample(1:max_ts_length, size = floor(max_ts_length * frac))
-          sim_data[na_indices, node] <- NA
+      while(attempt <= max_attempts && !success) {
+        sim_data <- sim_data_master
+        targets <- node_classes[[class_name]]
+        
+        iter_seed <- seed + 2000 + counter + (attempt * 10000)
+        set.seed(iter_seed)
+        
+        for (node in targets) {
+          if (frac > 0) {
+            na_indices <- sample(1:max_ts_length, size = floor(max_ts_length * frac))
+            sim_data[na_indices, node] <- NA
+          }
+        }
+        
+        if (attempt > 1) message(sprintf("    -> Retry attempt %d for %s...", attempt, iter_label))
+        
+        topo_seed <- iter_seed + 888888
+        res <- run_sensitivity_iteration(sim_data, adj_file, lags_file, iter_label, latent_dict, 
+                                         N_rand, cores, detrend, standardize, control_time_drift, 
+                                         seed = topo_seed)
+        
+        if (res$Status == "Success") {
+          success <- TRUE
+        } else {
+          attempt <- attempt + 1
         }
       }
       
-      res <- run_sensitivity_iteration(sim_data, adj_file, lags_file, iter_label, latent_dict, N_rand, cores,
-                                       detrend = detrend, 
-                                       standardize = standardize, 
-                                       control_time_drift = control_time_drift)
       res$Experiment <- "1_Missing_Data"
       res$Class <- class_name
       res$Level <- frac
       
-      # WRITE TO DISK AND PURGE MEMORY
       saveRDS(res, out_file)
       rm(res, sim_data)
       gc(verbose = FALSE, reset = TRUE)
@@ -252,25 +275,47 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
       
       message(sprintf("\n[Exp 2: %d/%d] Running: %s", counter, total_exp2, iter_label))
       
-      mod_sd <- base_sd
-      targets <- node_classes[[class_name]]
-      mod_sd[targets] <- mod_sd[targets] * mult
+      attempt <- 1
+      success <- FALSE
       
-      sim_data <- simulate_dsem_data(weights.file = weights_file, lags_file, n_steps = max_ts_length, 
-                                     var.mu = base_mu, var.sd = mod_sd, var.slope = base_slope, 
-                                     latent_vars = names(latent_dict))
+      while(attempt <= max_attempts && !success) {
+        mod_obs_sd <- base_observation_sd
+        targets <- node_classes[[class_name]]
+        mod_obs_sd[targets] <- mod_obs_sd[targets] * mult
+        
+        iter_seed <- seed + 2000 + counter + (attempt * 10000)
+        set.seed(iter_seed)
+        
+        # If multiplier is 1x, use the vetted master dataset. Otherwise, generate a new noisy one.
+        if (mult == 1) {
+          sim_data <- sim_data_master
+        } else {
+          sim_data <- simulate_dsem_data(weights.file = weights_file, lags.file = lags_file, n_steps = max_ts_length, 
+                                         var.mu = base_mu, process.sd = base_process_sd, observation.sd = mod_obs_sd, 
+                                         var.slope = base_slope, latent_vars = names(latent_dict))
+        }
+        
+        if (attempt > 1) message(sprintf("    -> Retry attempt %d for %s...", attempt, iter_label))
+        
+        topo_seed <- iter_seed + 888888
+        
+        res <- run_sensitivity_iteration(sim_data, adj_file, lags_file, iter_label, latent_dict, 
+                                         N_rand, cores, detrend, standardize, control_time_drift, 
+                                         seed = topo_seed)
+        
+        if (res$Status == "Success") {
+          success <- TRUE
+        } else {
+          attempt <- attempt + 1
+        }
+      }
       
-      res <- run_sensitivity_iteration(sim_data, adj_file, lags_file, iter_label, latent_dict, N_rand, cores,
-                                       detrend = detrend, 
-                                       standardize = standardize, 
-                                       control_time_drift = control_time_drift)
       res$Experiment <- "2_Variance"
       res$Class <- class_name
       res$Level <- mult
       
-      # WRITE TO DISK AND PURGE MEMORY
       saveRDS(res, out_file)
-      rm(res, sim_data, mod_sd)
+      rm(res, sim_data, mod_obs_sd)
       gc(verbose = FALSE, reset = TRUE)
       
       counter <- counter + 1
@@ -301,15 +346,16 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
     
     sim_data <- sim_data_master[1:n_len, ]
     
-    res <- run_sensitivity_iteration(sim_data, adj_file, lags_file, iter_label, latent_dict, N_rand, cores,
-                                     detrend = detrend, 
-                                     standardize = standardize, 
-                                     control_time_drift = control_time_drift)
+    iter_seed <- seed + 3000 + counter
+    topo_seed <- iter_seed + 888888
+    
+    res <- run_sensitivity_iteration(sim_data, adj_file, lags_file, iter_label, latent_dict, 
+                                     N_rand, cores, detrend, standardize, control_time_drift, 
+                                     seed = topo_seed)
     res$Experiment <- "3_TS_Length"
     res$Class <- "All"
     res$Level <- n_len
     
-    # WRITE TO DISK AND PURGE MEMORY
     saveRDS(res, out_file)
     rm(res, sim_data)
     gc(verbose = FALSE, reset = TRUE)
@@ -324,7 +370,6 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
   message("Aggregating intermediate files and generating plots...")
   message("==========================================")
   
-  # Read only the experiment iteration files back into memory
   int_files <- list.files(int_dir, pattern = "^exp[123]_iter_[0-9]{3}\\.rds$", full.names = TRUE)
   if(length(int_files) > 0) {
     sensitivity_results <- do.call(rbind, lapply(int_files, readRDS))
@@ -332,7 +377,6 @@ run_dsem_sensitivity <- function(weights_file, adj_file, lags_file, node_classes
     stop("No intermediate experiment results found.")
   }
   
-  # Save the finalized dataframe
   saveRDS(sensitivity_results, file.path(out_dir, "sensitivity_results_all_experiments.rds"))
   
   p_sens <- ggplot2::ggplot(sensitivity_results %>% dplyr::filter(!is.na(NLL_Percentile)), 
